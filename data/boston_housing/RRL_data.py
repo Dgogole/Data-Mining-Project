@@ -28,7 +28,7 @@ feature_types = {
     'RM': 'continuous',
     'AGE': 'continuous',
     'DIS': 'continuous',
-    'RAD': 'discrete',
+    'RAD': 'continuous',
     'TAX': 'continuous',
     'PTRATIO': 'continuous',
     'B': 'continuous',
@@ -93,7 +93,7 @@ with open(output_data_file, 'w') as f:
                 values.append(str(int(row[col])))
             else:
                 values.append(f"{row[col]:.6f}")
-        f.write(' '.join(values) + '\n')
+        f.write(','.join(values) + '\n')
 print(f"   ✓ Saved {df_filled.shape[0]} rows and {df_filled.shape[1]} columns")
 
 # 5. Save .info file
