@@ -8,6 +8,8 @@
 
    - Boston Housing
 
+      [数据集性质分析](data/boston_housing/dataset_analysis.ipynb)
+
      [Zhang-bingrui/Boston_house: 波士顿房价数据集](https://github.com/Zhang-bingrui/Boston_house)
 
 2. 模型
