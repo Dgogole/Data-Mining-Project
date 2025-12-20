@@ -6,7 +6,7 @@ NOX continuous
 RM continuous
 AGE continuous
 DIS continuous
-RAD continuous
+RAD discrete
 TAX continuous
 PTRATIO continuous
 B continuous

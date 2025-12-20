@@ -6,8 +6,10 @@ Processes Boston Housing dataset and saves in RRL format (.data and .info files)
 import pandas as pd
 
 # File paths
-input_file = './HousingData.csv'
-output_base = 'boston_housing'
+# input_file = './HousingData.csv'
+# output_base = 'boston_housing'
+input_file = './bh_decent.csv'
+output_base = 'bh_decent'
 output_data_file = f'{output_base}.data'
 output_info_file = f'{output_base}.info'
 
@@ -28,7 +30,7 @@ feature_types = {
     'RM': 'continuous',
     'AGE': 'continuous',
     'DIS': 'continuous',
-    'RAD': 'continuous',
+    'RAD': 'discrete',
     'TAX': 'continuous',
     'PTRATIO': 'continuous',
     'B': 'continuous',

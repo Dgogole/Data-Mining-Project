@@ -9,16 +9,8 @@ def read_info(info_path):
         f_list = []
         for line in f:
             tokens = line.strip().split()
-            if tokens:  # Skip empty lines
-                f_list.append(tokens)
-    # Last line contains label position (format: "LABEL_POS <pos>" or just "<pos>")
-    last_line = f_list[-1]
-    if len(last_line) >= 2 and last_line[0] == 'LABEL_POS':
-        label_pos = int(last_line[1])
-    else:
-        # Fallback: assume last token is the position
-        label_pos = int(last_line[-1])
-    return f_list[:-1], label_pos
+            f_list.append(tokens)
+    return f_list[:-1], int(f_list[-1][-1])
 
 
 def read_csv(data_path, info_path, shuffle=False):
@@ -65,26 +57,16 @@ class DBEncoder:
         y_df = y_df.reset_index(drop=True)
         discrete_data, continuous_data = self.split_data(X_df)
         
-        # Use provided task type
+        # Set task type first
         self.task_type = task_type
-        if task_type == 'regression':
+        
+        if task_type == 'classification':
+            self.label_enc.fit(y_df)
+            self.y_fname = list(self.label_enc.get_feature_names_out(y_df.columns)) if self.y_one_hot else y_df.columns
+        else:  # regression
             self.y_one_hot = False
             self.label_enc = None
-        else:
-            self.label_enc.fit(y_df)
-        
-        # Handle both old and new scikit-learn API
-        if self.task_type == 'regression':
-            self.y_fname = y_df.columns.tolist()
-        elif self.y_one_hot:
-            if hasattr(self.label_enc, 'get_feature_names_out'):
-                # scikit-learn >= 1.0
-                self.y_fname = list(self.label_enc.get_feature_names_out(y_df.columns))
-            else:
-                # scikit-learn < 1.0
-                self.y_fname = list(self.label_enc.get_feature_names(y_df.columns))
-        else:
-            self.y_fname = y_df.columns
+            self.y_fname = y_df.columns.tolist() if isinstance(y_df.columns, pd.Index) else y_df.columns
 
         if not continuous_data.empty:
             # Use mean as missing value for continuous columns if do not discretize them.
@@ -93,13 +75,7 @@ class DBEncoder:
             # One-hot encoding
             self.feature_enc.fit(discrete_data)
             feature_names = discrete_data.columns
-            # Handle both old and new scikit-learn API
-            if hasattr(self.feature_enc, 'get_feature_names_out'):
-                # scikit-learn >= 1.0
-                self.X_fname = list(self.feature_enc.get_feature_names_out(feature_names))
-            else:
-                # scikit-learn < 1.0
-                self.X_fname = list(self.feature_enc.get_feature_names(feature_names))
+            self.X_fname = list(self.feature_enc.get_feature_names_out(feature_names))
             self.discrete_flen = len(self.X_fname)
             if not self.discrete:
                 self.X_fname.extend(continuous_data.columns)

@@ -198,6 +198,8 @@ class RRL:
 
             ba_cnt = 0
             for X, y in data_loader:
+                # print(f"X: {X}, y: {y}")
+                # exit()
                 ba_cnt += 1
                 X = X.cuda(self.device_id, non_blocking=True)
                 y = y.cuda(self.device_id, non_blocking=True)
@@ -296,34 +298,29 @@ class RRL:
         
         if self.task_type == 'regression':
             # For regression, y_true is already the target values
-            y_true_np = y_true.cpu().numpy().astype(np.float32)
-            if y_true_np.ndim == 1:
-                y_true_np = y_true_np.reshape(-1, 1)
-            data_num = y_true_np.shape[0]
-            
+            y_true = y_true.squeeze()
+            data_num = y_true.shape[0]
+
             slice_step = data_num // 40 if data_num >= 40 else 1
-            logging.debug('y_true: {} {}'.format(y_true_np.shape, y_true_np[:: slice_step, 0]))
-            
-            y_pred_b_list = []
+            logging.debug('y_true: {} {}'.format(y_true.shape, y_true[:: slice_step]))
+
+            y_pred_list = []
             for X, y in test_loader:
                 X = X.cuda(self.device_id, non_blocking=True)
                 output = self.net.forward(X)
-                y_pred_b_list.append(output)
-            
-            y_pred_b = torch.cat(y_pred_b_list).cpu().numpy()
-            if y_pred_b.ndim == 1:
-                y_pred_b = y_pred_b.reshape(-1, 1)
-            
-            logging.debug('y_pred: {} {}'.format(y_pred_b.shape, y_pred_b[:: slice_step, 0]))
-            
-            # Calculate regression metrics
-            mse = metrics.mean_squared_error(y_true_np, y_pred_b)
-            mae = metrics.mean_absolute_error(y_true_np, y_pred_b)
-            r2 = metrics.r2_score(y_true_np, y_pred_b)
-            
+                y_pred_list.append(output)
+
+            y_pred = torch.cat(y_pred_list).cpu().numpy().squeeze()
+            logging.debug('y_pred: {} {}'.format(y_pred.shape, y_pred[:: slice_step]))
+
+            mse = metrics.mean_squared_error(y_true, y_pred)
+            mae = metrics.mean_absolute_error(y_true, y_pred)
+            r2 = metrics.r2_score(y_true, y_pred)
+
             logging.info('-' * 60)
-            logging.info('On {} Set:\n\tMSE of RRL Model: {}\n\tMAE of RRL Model: {}\n\tR2 Score of RRL Model: {}'.format(
-                set_name, mse, mae, r2))
+            logging.info('On {} Set:\n\tMSE of RRL  Model: {}'
+                            '\n\tMAE of RRL  Model: {}'
+                            '\n\tR2 Score of RRL  Model: {}'.format(set_name, mse, mae, r2))
             logging.info('-' * 60)
             
             return mse
