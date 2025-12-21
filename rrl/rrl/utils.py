@@ -49,7 +49,7 @@ class DBEncoder:
         continuous_data = X_df[self.f_df.loc[self.f_df[1] == 'continuous', 0]]
         if not continuous_data.empty:
             continuous_data = continuous_data.replace(to_replace=r'.*\?.*', value=np.nan, regex=True)
-            continuous_data = continuous_data.astype(np.float)
+            continuous_data = continuous_data.astype(np.float32)
         return discrete_data, continuous_data
 
     def fit(self, X_df, y_df, task_type='classification'):
@@ -110,6 +110,7 @@ class DBEncoder:
                     self.mean = continuous_data.mean()
                     self.std = continuous_data.std()
                 continuous_data = (continuous_data - self.mean) / self.std
+
         if not discrete_data.empty:
             # One-hot encoding
             discrete_data = self.feature_enc.transform(discrete_data)
