@@ -1,0 +1,15 @@
+CRIM continuous
+ZN continuous
+INDUS continuous
+CHAS discrete
+NOX continuous
+RM continuous
+AGE continuous
+DIS continuous
+RAD discrete
+TAX continuous
+PTRATIO continuous
+B continuous
+LSTAT continuous
+MEDV continuous
+LABEL_POS 13
