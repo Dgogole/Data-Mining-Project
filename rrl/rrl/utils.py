@@ -42,21 +42,31 @@ class DBEncoder:
         self.continuous_flen = None
         self.mean = None
         self.std = None
+        self.task_type = None  # 'classification' or 'regression'
 
     def split_data(self, X_df):
         discrete_data = X_df[self.f_df.loc[self.f_df[1] == 'discrete', 0]]
         continuous_data = X_df[self.f_df.loc[self.f_df[1] == 'continuous', 0]]
         if not continuous_data.empty:
             continuous_data = continuous_data.replace(to_replace=r'.*\?.*', value=np.nan, regex=True)
-            continuous_data = continuous_data.astype(np.float)
+            continuous_data = continuous_data.astype(np.float32)
         return discrete_data, continuous_data
 
-    def fit(self, X_df, y_df):
+    def fit(self, X_df, y_df, task_type='classification'):
         X_df = X_df.reset_index(drop=True)
         y_df = y_df.reset_index(drop=True)
         discrete_data, continuous_data = self.split_data(X_df)
-        self.label_enc.fit(y_df)
-        self.y_fname = list(self.label_enc.get_feature_names(y_df.columns)) if self.y_one_hot else y_df.columns
+        
+        # Set task type first
+        self.task_type = task_type
+        
+        if task_type == 'classification':
+            self.label_enc.fit(y_df)
+            self.y_fname = list(self.label_enc.get_feature_names_out(y_df.columns)) if self.y_one_hot else y_df.columns
+        else:  # regression
+            self.y_one_hot = False
+            self.label_enc = None
+            self.y_fname = y_df.columns.tolist() if isinstance(y_df.columns, pd.Index) else y_df.columns
 
         if not continuous_data.empty:
             # Use mean as missing value for continuous columns if do not discretize them.
@@ -65,7 +75,7 @@ class DBEncoder:
             # One-hot encoding
             self.feature_enc.fit(discrete_data)
             feature_names = discrete_data.columns
-            self.X_fname = list(self.feature_enc.get_feature_names(feature_names))
+            self.X_fname = list(self.feature_enc.get_feature_names_out(feature_names))
             self.discrete_flen = len(self.X_fname)
             if not self.discrete:
                 self.X_fname.extend(continuous_data.columns)
@@ -74,24 +84,35 @@ class DBEncoder:
             self.discrete_flen = 0
         self.continuous_flen = continuous_data.shape[1]
 
-    def transform(self, X_df, y_df, normalized=False, keep_stat=False):
+    def transform(self, X_df, y_df, normalized=False, keep_stat=False, use_log=False):
         X_df = X_df.reset_index(drop=True)
         y_df = y_df.reset_index(drop=True)
         discrete_data, continuous_data = self.split_data(X_df)
-        # Encode string value to int index.
-        y = self.label_enc.transform(y_df.values.reshape(-1, 1))
-        if self.y_one_hot:
-            y = y.toarray()
+        
+        # Handle regression vs classification
+        if self.task_type == 'regression':
+            # For regression, y is just the numeric values
+            y = y_df.values.astype(np.float32)
+            if y.shape[1] == 1:
+                y = y.reshape(-1, 1)  # Keep as 2D array
+        else:
+            # Encode string value to int index for classification
+            y = self.label_enc.transform(y_df.values.reshape(-1, 1))
+            if self.y_one_hot:
+                y = y.toarray()
 
         if not continuous_data.empty:
             # Use mean as missing value for continuous columns if we do not discretize them.
             continuous_data = pd.DataFrame(self.imp.transform(continuous_data.values),
                                            columns=continuous_data.columns)
+            if use_log:
+                continuous_data = np.log(continuous_data + 1)
             if normalized:
                 if keep_stat:
                     self.mean = continuous_data.mean()
                     self.std = continuous_data.std()
                 continuous_data = (continuous_data - self.mean) / self.std
+
         if not discrete_data.empty:
             # One-hot encoding
             discrete_data = self.feature_enc.transform(discrete_data)
