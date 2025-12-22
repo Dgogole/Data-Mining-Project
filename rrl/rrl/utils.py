@@ -84,7 +84,7 @@ class DBEncoder:
             self.discrete_flen = 0
         self.continuous_flen = continuous_data.shape[1]
 
-    def transform(self, X_df, y_df, normalized=False, keep_stat=False):
+    def transform(self, X_df, y_df, normalized=False, keep_stat=False, use_log=False):
         X_df = X_df.reset_index(drop=True)
         y_df = y_df.reset_index(drop=True)
         discrete_data, continuous_data = self.split_data(X_df)
@@ -105,6 +105,8 @@ class DBEncoder:
             # Use mean as missing value for continuous columns if we do not discretize them.
             continuous_data = pd.DataFrame(self.imp.transform(continuous_data.values),
                                            columns=continuous_data.columns)
+            if use_log:
+                continuous_data = np.log(continuous_data + 1)
             if normalized:
                 if keep_stat:
                     self.mean = continuous_data.mean()

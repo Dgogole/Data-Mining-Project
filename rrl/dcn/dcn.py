@@ -5,8 +5,8 @@ class CrossLayer(nn.Module):
     
     def __init__(self, n):
         super().__init__()
-        self.w = nn.Parameter(torch.rand((n,)))
-        self.b = nn.Parameter(torch.rand((n,)))
+        self.w = nn.Parameter(torch.randn((n,)))
+        self.b = nn.Parameter(torch.randn((n,)))
     
     def forward(self, x0, x):
         return x0 * (x @ self.w.unsqueeze(1)) + self.b.unsqueeze(0) + x
@@ -20,7 +20,8 @@ class DCN_net(nn.Module):
             nn.Linear(embedding_dim, deep_dim),
             nn.BatchNorm1d(deep_dim),
             nn.ReLU(),
-            *[layer for _ in range(layers_d-1) for layer in [nn.Linear(deep_dim, deep_dim), nn.BatchNorm1d(deep_dim), nn.ReLU()]])
+            *[layer for _ in range(layers_d-2) for layer in [nn.Linear(deep_dim, deep_dim), nn.BatchNorm1d(deep_dim), nn.ReLU()]],
+            nn.Linear(deep_dim, deep_dim))
 
     def forward(self, x):
         output_c = x
@@ -45,7 +46,7 @@ class DCN_Encoder(nn.Module):
         for layer in self.w:
             features.append(layer(x[:, offset:offset+layer.in_features]))
             offset += layer.in_features
-        features.append(torch.log(x[:, offset:] + 1))
+        features.append(x[:, offset:])
         return torch.cat(features, axis=1)
 
 class DCN(nn.Module):

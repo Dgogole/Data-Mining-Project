@@ -8,10 +8,6 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.svm import SVR
-from sklearn.neural_network import MLPRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import warnings
 from dcn.dcn import DCN
@@ -26,20 +22,28 @@ from rrl.utils import read_csv, DBEncoder
 
 DATA_DIR = '../data/boston_housing/'
 
+def evaluate(model, dataloader):
+    y_pred = []
+    for batch_data, labels in dataloader:
+        model.eval()
+        with torch.no_grad():
+            preds = model(batch_data)
+        y_pred.append(preds)
+    return torch.cat(y_pred, axis=0)
 
-def evaluate_model(model, X_train, y_train, X_test, y_test, model_name):
+def train_model(model, X_train, y_train, X_test, y_test, model_name):
     """Train and evaluate a regression model"""
     # Train the model
     
-    train_set = TensorDataset(torch.tensor(X_train.astype(np.float32)), torch.tensor(y_train.astype(np.float32)))
-    test_set = TensorDataset(torch.tensor(X_test.astype(np.float32)), torch.tensor(y_test.astype(np.float32)))
-    train_dataloader = DataLoader(train_set, batch_size=512, shuffle=False)
+    train_set = TensorDataset(torch.tensor(X_train.astype(np.float32)), torch.tensor(y_train.astype(np.float32)).view(-1, 1))
+    test_set = TensorDataset(torch.tensor(X_test.astype(np.float32)), torch.tensor(y_test.astype(np.float32)).view(-1, 1))
+    train_dataloader = DataLoader(train_set, batch_size=128, shuffle=False)
+    test_dataloader = DataLoader(test_set, batch_size=128, shuffle=False)
 
-    optimizer = Adam(model.parameters(), lr=0.0005, weight_decay=0)
+    optimizer = Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
     loss_func = MSELoss()
-    step_limit = 150000
 
-    for epoch in range(0, 100):
+    for epoch in range(0, 500):
         step = 0
         tot_loss = 0
         for batch_data, labels in train_dataloader:
@@ -52,13 +56,12 @@ def evaluate_model(model, X_train, y_train, X_test, y_test, model_name):
                 optimizer.step()
             step += 1
             tot_loss += loss
-            if step >= step_limit:
-                    break
-        print(f"Epoch {epoch + 1}: tot_loss: {tot_loss}")
+        if epoch % 20 == 19:
+            print(f"Epoch {epoch + 1}: tot_loss: {tot_loss / step}")
 
     # Make predictions
-    y_train_pred = model.predict(X_train)
-    y_test_pred = model.predict(X_test)
+    y_train_pred = evaluate(model, train_dataloader)
+    y_test_pred = evaluate(model, test_dataloader)
     
     # Calculate metrics
     train_mse = mean_squared_error(y_train, y_train_pred)
@@ -67,6 +70,15 @@ def evaluate_model(model, X_train, y_train, X_test, y_test, model_name):
     test_mae = mean_absolute_error(y_test, y_test_pred)
     train_r2 = r2_score(y_train, y_train_pred)
     test_r2 = r2_score(y_test, y_test_pred)
+    print({
+        'model': model_name,
+        'train_mse': train_mse,
+        'test_mse': test_mse,
+        'train_mae': train_mae,
+        'test_mae': test_mae,
+        'train_r2': train_r2,
+        'test_r2': test_r2
+    })
     
     return {
         'model': model_name,
@@ -97,19 +109,23 @@ def main():
     db_enc = DBEncoder(f_df, discrete=False, y_one_hot=False, drop=None)
     db_enc.fit(X_df, y_df, task_type='regression')
     discrete_catenum = [len(x) for x in db_enc.feature_enc.categories_]
-    X, y = db_enc.transform(X_df, y_df, normalized=False, keep_stat=False)
-    
+    X, y = db_enc.transform(X_df, y_df, normalized=True, keep_stat=True, use_log=True)
     print(f"After encoding: X shape = {X.shape}, y shape = {y.shape}")
     
     results = []
     # Split data using 5-fold CV (same as RRL)
     kf = KFold(n_splits=5, shuffle=True, random_state=0)
-    for train_index, test_index in list(kf.split(X_df)):
+    for train_index, test_index in list(kf.split(X)):
     
         X_train = X[train_index]
         y_train = y[train_index].ravel() if y.ndim > 1 else y[train_index]
         X_test = X[test_index]
         y_test = y[test_index].ravel() if y.ndim > 1 else y[test_index]
+
+        
+        # scaler = StandardScaler()
+        # X_train = scaler.fit_transform(X_train)
+        # X_test = scaler.transform(X_test)
         
         print(f"\nTrain set: {X_train.shape[0]} samples")
         print(f"Test set: {X_test.shape[0]} samples")
@@ -118,8 +134,8 @@ def main():
         print("Training and Evaluating Models")
         print("=" * 80)
         
-        model = DCN(discrete_catenum, db_enc.continuous_flen, 512, 4, 4, "regression")
-        result = evaluate_model(model, X_train, y_train, X_test, y_test, "DCN")
+        model = DCN(discrete_catenum, db_enc.continuous_flen, 128, 2, 2, "regression")
+        result = train_model(model, X_train, y_train, X_test, y_test, "DCN")
             
         print(f"  Train MSE: {result['train_mse']:.4f}, Test MSE: {result['test_mse']:.4f}")
         print(f"  Train MAE: {result['train_mae']:.4f}, Test MAE: {result['test_mae']:.4f}")
@@ -178,3 +194,4 @@ def main():
 if __name__ == '__main__':
     main()
 
+    
