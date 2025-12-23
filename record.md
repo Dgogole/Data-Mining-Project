@@ -76,3 +76,9 @@
 - 仓库
 - 数据集类（周四晚上）
 - 代码读懂、找到修改点
+
+## 超参
+RRL boston housing regresseion: 
+```shell
+python3 experiment.py -d boston_housing -bs 32 -s 12@64 -e1000 -lrde 100 -lr 0.005 -ki 0 -i 0 -wd 0.0001 --print_rule --task_type regression --nlaf --alpha 0.999 --beta 8 --gamma 3
+```
