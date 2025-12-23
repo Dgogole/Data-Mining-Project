@@ -3,3 +3,8 @@
 rrl/log_folder/**
 
 rrl/grid_search_results.csv
+
+run_boston_experiments_designed.py
+run_boston_experiments.py
+run_missing_experiments.py
+generate_boston_md.py

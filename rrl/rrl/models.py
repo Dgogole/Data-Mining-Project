@@ -93,7 +93,7 @@ class MyDistributedDataParallel(torch.nn.parallel.DistributedDataParallel):
 class RRL:
     def __init__(self, dim_list, device_id, use_not=False, is_rank0=False, log_file=None, writer=None, left=None,
                  right=None, save_best=False, estimated_grad=False, save_path=None, distributed=True, use_skip=False, 
-                 use_nlaf=False, alpha=0.999, beta=8, gamma=1, temperature=0.01):
+                 use_nlaf=False, alpha=0.999, beta=8, gamma=1, temperature=0.01, task_type='classification'):
         super(RRL, self).__init__()
         self.dim_list = dim_list
         self.use_not = use_not
@@ -102,8 +102,10 @@ class RRL:
         self.alpha =alpha
         self.beta = beta
         self.gamma = gamma
+        self.task_type = task_type  # 'classification' or 'regression'
         self.best_f1 = -1.
         self.best_loss = 1e20
+        self.best_mse = 1e20  # For regression
 
         self.device_id = device_id
         self.is_rank0 = is_rank0
@@ -124,7 +126,9 @@ class RRL:
         self.net = Net(dim_list, use_not=use_not, left=left, right=right, use_nlaf=use_nlaf, estimated_grad=estimated_grad, use_skip=use_skip, alpha=alpha, beta=beta, gamma=gamma, temperature=temperature)
         self.net.cuda(self.device_id)
         if distributed:
-            self.net = MyDistributedDataParallel(self.net, device_ids=[self.device_id])
+            # For regression task, temperature parameter may not be used, so we need to find unused parameters
+            find_unused = (task_type == 'regression')
+            self.net = MyDistributedDataParallel(self.net, device_ids=[self.device_id], find_unused_parameters=find_unused)
 
     def clip(self):
         """Clip the weights into the range [0, 1]."""
@@ -172,8 +176,13 @@ class RRL:
 
         accuracy_b = []
         f1_score_b = []
+        mse_scores = []  # For regression
 
-        criterion = nn.CrossEntropyLoss().cuda(self.device_id)
+        # Select loss function based on task type
+        if self.task_type == 'regression':
+            criterion = nn.MSELoss().cuda(self.device_id)
+        else:
+            criterion = nn.CrossEntropyLoss().cuda(self.device_id)
         optimizer = torch.optim.Adam(self.net.parameters(), lr=lr, weight_decay=0.0)
 
         cnt = -1
@@ -189,16 +198,29 @@ class RRL:
 
             ba_cnt = 0
             for X, y in data_loader:
+                # print(f"X: {X}, y: {y}")
+                # exit()
                 ba_cnt += 1
                 X = X.cuda(self.device_id, non_blocking=True)
                 y = y.cuda(self.device_id, non_blocking=True)
                 optimizer.zero_grad()  # Zero the gradient buffers.
                 
-                # trainable softmax temperature
-                y_bar = self.net.forward(X) / torch.exp(self.net.t)
-                y_arg = torch.argmax(y, dim=1)
+                # Forward pass
+                y_bar = self.net.forward(X)
+                # trainable softmax temperature (only for classification)
+                if self.task_type != 'regression':
+                    y_bar = y_bar / torch.exp(self.net.t)
                 
-                loss_rrl = criterion(y_bar, y_arg) + weight_decay * self.l2_penalty()
+                # Compute loss based on task type
+                if self.task_type == 'regression':
+                    # For regression, y is already the target values
+                    # if y.dim() == 1:
+                    #     y = y.unsqueeze(1)
+                    loss_rrl = criterion(y_bar, y) + weight_decay * self.l2_penalty()
+                else:
+                    # For classification
+                    y_arg = torch.argmax(y, dim=1)
+                    loss_rrl = criterion(y_bar, y_arg) + weight_decay * self.l2_penalty()
                 
                 ba_loss_rrl = loss_rrl.item()
                 epoch_loss_rrl += ba_loss_rrl
@@ -219,26 +241,41 @@ class RRL:
                 
                 if self.is_rank0:
                     for i, param in enumerate(self.net.parameters()):
-                        abs_gradient_max = max(abs_gradient_max, abs(torch.max(param.grad)))
-                        abs_gradient_avg += torch.sum(torch.abs(param.grad)) / (param.grad.numel())
+                        if param.grad is not None:
+                            abs_gradient_max = max(abs_gradient_max, abs(torch.max(param.grad)))
+                            abs_gradient_avg += torch.sum(torch.abs(param.grad)) / (param.grad.numel())
                 self.clip()
 
                 if self.is_rank0 and (cnt % (TEST_CNT_MOD * (1 if self.save_best else 10)) == 0):
                     if valid_loader is not None:
-                        acc_b, f1_b = self.test(test_loader=valid_loader, set_name='Validation')
+                        if self.task_type == 'regression':
+                            mse_b = self.test(test_loader=valid_loader, set_name='Validation')
+                        else:
+                            acc_b, f1_b = self.test(test_loader=valid_loader, set_name='Validation')
                     else: # use the data_loader as the valid loader
-                        acc_b, f1_b = self.test(test_loader=data_loader, set_name='Training')
+                        if self.task_type == 'regression':
+                            mse_b = self.test(test_loader=data_loader, set_name='Training')
+                        else:
+                            acc_b, f1_b = self.test(test_loader=data_loader, set_name='Training')
                     
-                    if self.save_best and (f1_b > self.best_f1 or (np.abs(f1_b - self.best_f1) < 1e-10 and self.best_loss > epoch_loss_rrl)):
-                        self.best_f1 = f1_b
-                        self.best_loss = epoch_loss_rrl
-                        self.save_model()
-                    
-                    accuracy_b.append(acc_b)
-                    f1_score_b.append(f1_b)
-                    if self.writer is not None:
-                        self.writer.add_scalar('Accuracy_RRL', acc_b, cnt // TEST_CNT_MOD)
-                        self.writer.add_scalar('F1_Score_RRL', f1_b, cnt // TEST_CNT_MOD)
+                    if self.task_type == 'regression':
+                        if self.save_best and mse_b < self.best_mse:
+                            self.best_mse = mse_b
+                            self.best_loss = epoch_loss_rrl
+                            self.save_model()
+                        mse_scores.append(mse_b)
+                        if self.writer is not None:
+                            self.writer.add_scalar('MSE_RRL', mse_b, cnt // TEST_CNT_MOD)
+                    else:
+                        if self.save_best and (f1_b > self.best_f1 or (np.abs(f1_b - self.best_f1) < 1e-10 and self.best_loss > epoch_loss_rrl)):
+                            self.best_f1 = f1_b
+                            self.best_loss = epoch_loss_rrl
+                            self.save_model()
+                        accuracy_b.append(acc_b)
+                        f1_score_b.append(f1_b)
+                        if self.writer is not None:
+                            self.writer.add_scalar('Accuracy_RRL', acc_b, cnt // TEST_CNT_MOD)
+                            self.writer.add_scalar('F1_Score_RRL', f1_b, cnt // TEST_CNT_MOD)
             if self.is_rank0:
                 logging.info('epoch: {}, loss_rrl: {}'.format(epo, epoch_loss_rrl))
                 if self.writer is not None:
@@ -258,39 +295,70 @@ class RRL:
         for X, y in test_loader:
             y_list.append(y)
         y_true = torch.cat(y_list, dim=0)
-        y_true = y_true.cpu().numpy().astype(np.int)
-        y_true = np.argmax(y_true, axis=1)
-        data_num = y_true.shape[0]
+        
+        if self.task_type == 'regression':
+            # For regression, y_true is already the target values
+            y_true = y_true.squeeze()
+            data_num = y_true.shape[0]
 
-        slice_step = data_num // 40 if data_num >= 40 else 1
-        logging.debug('y_true: {} {}'.format(y_true.shape, y_true[:: slice_step]))
+            slice_step = data_num // 40 if data_num >= 40 else 1
+            logging.debug('y_true: {} {}'.format(y_true.shape, y_true[:: slice_step]))
 
-        y_pred_b_list = []
-        for X, y in test_loader:
-            X = X.cuda(self.device_id, non_blocking=True)
-            output = self.net.forward(X)
-            y_pred_b_list.append(output)
+            y_pred_list = []
+            for X, y in test_loader:
+                X = X.cuda(self.device_id, non_blocking=True)
+                output = self.net.forward(X)
+                y_pred_list.append(output)
 
-        y_pred_b = torch.cat(y_pred_b_list).cpu().numpy()
-        y_pred_b_arg = np.argmax(y_pred_b, axis=1)
-        logging.debug('y_rrl_: {} {}'.format(y_pred_b_arg.shape, y_pred_b_arg[:: slice_step]))
-        logging.debug('y_rrl: {} {}'.format(y_pred_b.shape, y_pred_b[:: (slice_step)]))
+            y_pred = torch.cat(y_pred_list).cpu().numpy().squeeze()
+            logging.debug('y_pred: {} {}'.format(y_pred.shape, y_pred[:: slice_step]))
 
-        accuracy_b = metrics.accuracy_score(y_true, y_pred_b_arg)
-        f1_score_b = metrics.f1_score(y_true, y_pred_b_arg, average='macro')
+            mse = metrics.mean_squared_error(y_true, y_pred)
+            mae = metrics.mean_absolute_error(y_true, y_pred)
+            r2 = metrics.r2_score(y_true, y_pred)
 
-        logging.info('-' * 60)
-        logging.info('On {} Set:\n\tAccuracy of RRL  Model: {}'
-                        '\n\tF1 Score of RRL  Model: {}'.format(set_name, accuracy_b, f1_score_b))
-        logging.info('On {} Set:\nPerformance of  RRL Model: \n{}\n{}'.format(
-            set_name, metrics.confusion_matrix(y_true, y_pred_b_arg), metrics.classification_report(y_true, y_pred_b_arg)))
-        logging.info('-' * 60)
+            logging.info('-' * 60)
+            logging.info('On {} Set:\n\tMSE of RRL  Model: {}'
+                            '\n\tMAE of RRL  Model: {}'
+                            '\n\tR2 Score of RRL  Model: {}'.format(set_name, mse, mae, r2))
+            logging.info('-' * 60)
+            
+            return mse
+        else:
+            # For classification
+            y_true = y_true.cpu().numpy().astype(np.int)
+            y_true = np.argmax(y_true, axis=1)
+            data_num = y_true.shape[0]
 
-        return accuracy_b, f1_score_b
+            slice_step = data_num // 40 if data_num >= 40 else 1
+            logging.debug('y_true: {} {}'.format(y_true.shape, y_true[:: slice_step]))
+
+            y_pred_b_list = []
+            for X, y in test_loader:
+                X = X.cuda(self.device_id, non_blocking=True)
+                output = self.net.forward(X)
+                y_pred_b_list.append(output)
+
+            y_pred_b = torch.cat(y_pred_b_list).cpu().numpy()
+            y_pred_b_arg = np.argmax(y_pred_b, axis=1)
+            logging.debug('y_rrl_: {} {}'.format(y_pred_b_arg.shape, y_pred_b_arg[:: slice_step]))
+            logging.debug('y_rrl: {} {}'.format(y_pred_b.shape, y_pred_b[:: (slice_step)]))
+
+            accuracy_b = metrics.accuracy_score(y_true, y_pred_b_arg)
+            f1_score_b = metrics.f1_score(y_true, y_pred_b_arg, average='macro')
+
+            logging.info('-' * 60)
+            logging.info('On {} Set:\n\tAccuracy of RRL  Model: {}'
+                            '\n\tF1 Score of RRL  Model: {}'.format(set_name, accuracy_b, f1_score_b))
+            logging.info('On {} Set:\nPerformance of  RRL Model: \n{}\n{}'.format(
+                set_name, metrics.confusion_matrix(y_true, y_pred_b_arg), metrics.classification_report(y_true, y_pred_b_arg)))
+            logging.info('-' * 60)
+
+            return accuracy_b, f1_score_b
 
     def save_model(self):
         rrl_args = {'dim_list': self.dim_list, 'use_not': self.use_not, 'use_skip': self.use_skip, 'estimated_grad': self.estimated_grad, 
-                    'use_nlaf': self.use_nlaf, 'alpha': self.alpha, 'beta': self.beta, 'gamma': self.gamma}
+                    'use_nlaf': self.use_nlaf, 'alpha': self.alpha, 'beta': self.beta, 'gamma': self.gamma, 'task_type': self.task_type}
         torch.save({'model_state_dict': self.net.state_dict(), 'rrl_args': rrl_args}, self.save_path)
 
     def detect_dead_node(self, data_loader=None):
