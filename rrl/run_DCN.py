@@ -4,6 +4,7 @@ import pandas as pd
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, f1_score, accuracy_score, recall_score
+from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
 import warnings
 from dcn.dcn import DCN
 from torch.utils.data import TensorDataset, DataLoader
@@ -17,7 +18,7 @@ warnings.filterwarnings('ignore')
 
 from rrl.utils import read_csv, DBEncoder
 
-TASK = "classification"
+TASK = "regression"
 if TASK == "regression":
     DATA_DIR = '../data/boston_housing/'
 elif TASK == 'classification':
@@ -31,7 +32,7 @@ torch.cuda.manual_seed_all(SEED)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-def evaluate(model, dataloader, task_type = "regression"):
+def evaluate(model, dataloader):
     y_pred = []
     for batch_data, labels in dataloader:
         model.eval()
@@ -39,12 +40,48 @@ def evaluate(model, dataloader, task_type = "regression"):
         labels = labels.to(device)
         with torch.no_grad():
             preds = model(batch_data)
-        if task_type == "classification":
+        if TASK == "classification":
             preds = (preds >= 0.5).long()
         y_pred.append(preds)
     return torch.cat(y_pred, axis=0).cpu()
 
-def train_model(model, X_train, y_train, X_test, y_test, model_name, task_type = "regression"):
+def call_result(y_train, y_train_pred, y_test, y_test_pred):
+    if TASK == "regression":
+        train_mse = mean_squared_error(y_train, y_train_pred)
+        test_mse = mean_squared_error(y_test, y_test_pred)
+        train_mae = mean_absolute_error(y_train, y_train_pred)
+        test_mae = mean_absolute_error(y_test, y_test_pred)
+        train_r2 = r2_score(y_train, y_train_pred)
+        test_r2 = r2_score(y_test, y_test_pred)
+        result = {
+            'train_mse': train_mse,
+            'test_mse': test_mse,
+            'train_mae': train_mae,
+            'test_mae': test_mae,
+            'train_r2': train_r2,
+            'test_r2': test_r2
+        }
+    elif TASK == "classification":
+        train_f1 = f1_score(y_train, y_train_pred)
+        test_f1 = f1_score(y_test, y_test_pred)
+        train_acc = accuracy_score(y_train, y_train_pred)
+        test_acc = accuracy_score(y_test, y_test_pred)
+        test_macro_f1 = f1_score(y_test, y_test_pred, average='macro')
+        test_weighted_f1 = f1_score(y_test, y_test_pred, average='weighted')
+        test_recall = recall_score(y_test, y_test_pred)
+
+        result = {
+            'train_f1': train_f1,
+            'test_f1': test_f1,
+            'train_acc': train_acc,
+            'test_acc': test_acc,
+            'test_macro_f1': test_macro_f1,
+            'test_weighted_f1': test_weighted_f1,
+            'test_recall': test_recall
+        }
+    return result
+
+def train_model(model, X_train, y_train, X_test, y_test):
     """Train and evaluate a regression model"""
     # Train the model
     
@@ -60,9 +97,9 @@ def train_model(model, X_train, y_train, X_test, y_test, model_name, task_type =
     test_dataloader = DataLoader(test_set, batch_size=512, shuffle=False)
 
     optimizer = Adam(model.parameters(), lr=0.005, weight_decay=1e-4)
-    if task_type == "regression":
+    if TASK == "regression":
         loss_func = MSELoss()
-    elif task_type == "classification":
+    elif TASK == "classification":
         loss_func = BCELoss()
     
     best_model = None
@@ -86,13 +123,13 @@ def train_model(model, X_train, y_train, X_test, y_test, model_name, task_type =
             step += 1
             tot_loss += loss
         # if epoch % 20 == 19:
-        y_valid_pred = evaluate(model, valid_dataloader, task_type)
+        y_valid_pred = evaluate(model, valid_dataloader)
 
-        if task_type == "regression":
+        if TASK == "regression":
             mse = mean_squared_error(y_valid, y_valid_pred)
             print(f"Epoch {epoch + 1}: tot_loss: {tot_loss / step}; mse: {mse}")
             score = -mse
-        elif task_type == "classification":
+        elif TASK == "classification":
             f1, acc = f1_score(y_valid, y_valid_pred), accuracy_score(y_valid, y_valid_pred)
             print(f"Epoch {epoch + 1}: tot_loss: {tot_loss / step}; f1: {f1}; acc: {acc}")
             score = f1
@@ -107,44 +144,10 @@ def train_model(model, X_train, y_train, X_test, y_test, model_name, task_type =
 
     model = best_model
     # Make predictions
-    y_train_pred = evaluate(model, train_dataloader, task_type)
-    y_test_pred = evaluate(model, test_dataloader, task_type)
+    y_train_pred = evaluate(model, train_dataloader)
+    y_test_pred = evaluate(model, test_dataloader)
     
-    # Calculate metrics
-    if task_type == "regression":
-        train_mse = mean_squared_error(y_train, y_train_pred)
-        test_mse = mean_squared_error(y_test, y_test_pred)
-        train_mae = mean_absolute_error(y_train, y_train_pred)
-        test_mae = mean_absolute_error(y_test, y_test_pred)
-        train_r2 = r2_score(y_train, y_train_pred)
-        test_r2 = r2_score(y_test, y_test_pred)
-        result = {
-            'train_mse': train_mse,
-            'test_mse': test_mse,
-            'train_mae': train_mae,
-            'test_mae': test_mae,
-            'train_r2': train_r2,
-            'test_r2': test_r2
-        }
-    else:
-        train_f1 = f1_score(y_train, y_train_pred)
-        test_f1 = f1_score(y_test, y_test_pred)
-        train_acc = accuracy_score(y_train, y_train_pred)
-        test_acc = accuracy_score(y_test, y_test_pred)
-        test_macro_f1 = f1_score(y_test, y_test_pred, average='macro')
-        test_weighted_f1 = f1_score(y_test, y_test_pred, average='weighted')
-        test_recall = recall_score(y_test, y_test_pred)
-
-        result = {
-            'train_f1': train_f1,
-            'test_f1': test_f1,
-            'train_acc': train_acc,
-            'test_acc': test_acc,
-            'test_macro_f1': test_macro_f1,
-            'test_weighted_f1': test_weighted_f1,
-            'test_recall': test_recall
-        }
-    
+    result = call_result(y_train, y_train_pred, y_test, y_test_pred)
     print(result)
     return result
 
@@ -196,7 +199,14 @@ def main():
         print("=" * 80)
         
         model = DCN(discrete_catenum, db_enc.continuous_flen, 128, 3, 3, TASK).to(device)
-        result = train_model(model, X_train, y_train, X_test, y_test, "DCN", task_type=TASK)
+        result = train_model(model, X_train, y_train, X_test, y_test)
+        
+        # model = GradientBoostingRegressor(n_estimators=200, random_state=SEED)
+        # model = GradientBoostingClassifier(n_estimators=200, random_state=SEED)
+        # model.fit(X_train, y_train)
+        # y_train_pred = model.predict(X_train)
+        # y_test_pred = model.predict(X_test)
+        # result = call_result(y_train, y_train_pred, y_test, y_test_pred)
 
         results.append(result)
     
