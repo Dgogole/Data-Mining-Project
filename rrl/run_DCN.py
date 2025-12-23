@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, f1_score, accuracy_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, f1_score, accuracy_score, recall_score
 import warnings
 from dcn.dcn import DCN
 from torch.utils.data import TensorDataset, DataLoader
@@ -12,6 +12,7 @@ from torch.optim import Adam
 import torch
 from copy import deepcopy
 from time import sleep
+import random
 warnings.filterwarnings('ignore')
 
 from rrl.utils import read_csv, DBEncoder
@@ -21,6 +22,12 @@ if TASK == "regression":
     DATA_DIR = '../data/boston_housing/'
 elif TASK == 'classification':
     DATA_DIR = '../data/bank_marketing/'
+
+SEED = 0
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED) 
+torch.cuda.manual_seed_all(SEED)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -48,9 +55,9 @@ def train_model(model, X_train, y_train, X_test, y_test, model_name, task_type =
     train_set = TensorDataset(torch.tensor(X_train.astype(np.float32)), torch.tensor(y_train.astype(np.float32)).view(-1, 1))
     valid_set = TensorDataset(torch.tensor(X_valid.astype(np.float32)), torch.tensor(y_valid.astype(np.float32)).view(-1, 1))
     test_set = TensorDataset(torch.tensor(X_test.astype(np.float32)), torch.tensor(y_test.astype(np.float32)).view(-1, 1))
-    train_dataloader = DataLoader(train_set, batch_size=128, shuffle=False)
-    valid_dataloader = DataLoader(valid_set, batch_size=128, shuffle=False)
-    test_dataloader = DataLoader(test_set, batch_size=128, shuffle=False)
+    train_dataloader = DataLoader(train_set, batch_size=512, shuffle=False)
+    valid_dataloader = DataLoader(valid_set, batch_size=512, shuffle=False)
+    test_dataloader = DataLoader(test_set, batch_size=512, shuffle=False)
 
     optimizer = Adam(model.parameters(), lr=0.005, weight_decay=1e-4)
     if task_type == "regression":
@@ -112,7 +119,6 @@ def train_model(model, X_train, y_train, X_test, y_test, model_name, task_type =
         train_r2 = r2_score(y_train, y_train_pred)
         test_r2 = r2_score(y_test, y_test_pred)
         result = {
-            'model': model_name,
             'train_mse': train_mse,
             'test_mse': test_mse,
             'train_mae': train_mae,
@@ -125,16 +131,21 @@ def train_model(model, X_train, y_train, X_test, y_test, model_name, task_type =
         test_f1 = f1_score(y_test, y_test_pred)
         train_acc = accuracy_score(y_train, y_train_pred)
         test_acc = accuracy_score(y_test, y_test_pred)
+        test_macro_f1 = f1_score(y_test, y_test_pred, average='macro')
+        test_weighted_f1 = f1_score(y_test, y_test_pred, average='weighted')
+        test_recall = recall_score(y_test, y_test_pred)
+
         result = {
-            'model': model_name,
             'train_f1': train_f1,
             'test_f1': test_f1,
             'train_acc': train_acc,
-            'test_acc': test_acc
+            'test_acc': test_acc,
+            'test_macro_f1': test_macro_f1,
+            'test_weighted_f1': test_weighted_f1,
+            'test_recall': test_recall
         }
     
     print(result)
-    exit(0)
     return result
 
 
@@ -184,61 +195,15 @@ def main():
         print("Training and Evaluating Models")
         print("=" * 80)
         
-        model = DCN(discrete_catenum, db_enc.continuous_flen, 512, 3, 3, TASK).to(device)
+        model = DCN(discrete_catenum, db_enc.continuous_flen, 128, 3, 3, TASK).to(device)
         result = train_model(model, X_train, y_train, X_test, y_test, "DCN", task_type=TASK)
-            
-        print(f"  Train MSE: {result['train_mse']:.4f}, Test MSE: {result['test_mse']:.4f}")
-        print(f"  Train MAE: {result['train_mae']:.4f}, Test MAE: {result['test_mae']:.4f}")
-        print(f"  Train R²:  {result['train_r2']:.4f}, Test R²:  {result['test_r2']:.4f}")
+
         results.append(result)
     
-    # Create results DataFrame
-    results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values('test_mse')
-    
-    # Print summary
-    print("\n" + "=" * 80)
-    print("Summary: Models sorted by Test MSE (lower is better)")
-    print("=" * 80)
-    print(results_df[['model', 'test_mse', 'test_mae', 'test_r2']].to_string(index=False))
-    
-    # Save results
-    output_file = os.path.join(DATA_DIR, 'baseline_results.csv')
-    results_df.to_csv(output_file, index=False)
-    print(f"\nResults saved to {output_file}")
-    
-    # Print best model
-    best_model = results_df.iloc[0]
-    print("\n" + "=" * 80)
-    print("Best Model (by Test MSE):")
-    print("=" * 80)
-    print(f"Model: {best_model['model']}")
-    print(f"Test MSE: {best_model['test_mse']:.4f}")
-    print(f"Test MAE: {best_model['test_mae']:.4f}")
-    print(f"Test R²:  {best_model['test_r2']:.4f}")
-    
-    # Cross-validation on best model
-    print("\n" + "=" * 80)
-    print("5-Fold Cross-Validation on Best Model")
-    print("=" * 80)
-    best_model_name = best_model['model']
-    best_model_instance = model
-    
-    if 'SVR' in best_model_name or 'MLP' in best_model_name:
-        X_all_scaled = scaler.fit_transform(X)
-        cv_scores = cross_val_score(best_model_instance, X_all_scaled, y.ravel() if y.ndim > 1 else y, 
-                                   cv=kf, scoring='neg_mean_squared_error', n_jobs=-1)
-    else:
-        cv_scores = cross_val_score(best_model_instance, X, y.ravel() if y.ndim > 1 else y, 
-                                   cv=kf, scoring='neg_mean_squared_error', n_jobs=-1)
-    
-    cv_mse = -cv_scores
-    print(f"CV MSE: {cv_mse.mean():.4f} (+/- {cv_mse.std() * 2:.4f})")
-    print(f"CV MSE per fold: {cv_mse}")
-    
-    print("\n" + "=" * 80)
-    print("Baseline Evaluation Complete!")
-    print("=" * 80)
+    mean_result = {}
+    for key in results[0].keys():
+        mean_result[key] = sum([x[key] for x in results]) / len(results)
+    print(mean_result)
 
 
 if __name__ == '__main__':
