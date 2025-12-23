@@ -38,6 +38,7 @@
 | Baseline | Accuracy | Macro F1 | Weighted F1 | Class 1 Recall | Class 1 F1 |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | DCN | 0.9034 | 0.7654 | 0.9032 | 0.5836 | 0.5855 |
+| GradientBoostingClassifier (n_estimators=200) | 0.9073 | 0.7371 | 0.8992 | 0.4390 | 0.5256 |
 
 ## Part2 Boston-Housing
 
@@ -78,3 +79,4 @@
 | Baseline | MSE | MAE | R2 |
 | :--- | :---: | :---: | :---: |
 | DCN | 12.31 | 2.46 | 0.85 |
+| GradientBoostingClassifier (n_estimators=200) | 11.26 | 2.21 | 0.87 |
