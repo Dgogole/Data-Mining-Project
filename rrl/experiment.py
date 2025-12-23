@@ -14,17 +14,16 @@ from collections import defaultdict
 from rrl.utils import read_csv, DBEncoder
 from rrl.models import RRL
 
-DATA_DIR = '../data/boston_housing/'
-# DATA_DIR = './dataset/'
+DATA_DIR = './dataset'
 
 
-def get_data_loader(dataset, world_size, rank, batch_size, k=0, pin_memory=False, save_best=True, task_type='classification'):
+def get_data_loader(dataset, world_size, rank, batch_size, k=0, pin_memory=False, save_best=True):
     data_path = os.path.join(DATA_DIR, dataset + '.data')
     info_path = os.path.join(DATA_DIR, dataset + '.info')
     X_df, y_df, f_df, label_pos = read_csv(data_path, info_path, shuffle=True)
 
     db_enc = DBEncoder(f_df, discrete=False)
-    db_enc.fit(X_df, y_df, task_type=task_type)
+    db_enc.fit(X_df, y_df)
 
     X, y = db_enc.transform(X_df, y_df, normalized=True, keep_stat=True)
 
@@ -68,15 +67,39 @@ def train_model(gpu, args):
         is_rank0 = False
 
     dataset = args.data_set
-    task_type = args.task_type
     db_enc, train_loader, valid_loader, _ = get_data_loader(dataset, args.world_size, rank, args.batch_size,
-                                                            k=args.ith_kfold, pin_memory=True, save_best=args.save_best,
-                                                            task_type=task_type)
+                                                            k=args.ith_kfold, pin_memory=True, save_best=args.save_best)
 
     X_fname = db_enc.X_fname
     y_fname = db_enc.y_fname
     discrete_flen = db_enc.discrete_flen
     continuous_flen = db_enc.continuous_flen
+
+    # 在训练日志中添加超参数配置
+    if is_rank0:
+        import logging
+        logging.info("=" * 60)
+        logging.info("EXPERIMENT CONFIGURATION")
+        logging.info("=" * 60)
+        logging.info(f"Dataset: {args.data_set}")
+        logging.info(f"Epochs: {args.epoch}")
+        logging.info(f"Batch Size: {args.batch_size}")
+        logging.info(f"Learning Rate: {args.learning_rate}")
+        logging.info(f"Learning Rate Decay Rate: {args.lr_decay_rate}")
+        logging.info(f"Learning Rate Decay Epoch: {args.lr_decay_epoch}")
+        logging.info(f"Weight Decay: {args.weight_decay}")
+        logging.info(f"K-Fold Index: {args.ith_kfold}")
+        logging.info(f"Structure: {args.structure}")
+        logging.info(f"Use NOT Operator: {args.use_not}")
+        logging.info(f"Save Best Model: {args.save_best}")
+        logging.info(f"Use NLAF: {args.nlaf}")
+        logging.info(f"Use Estimated Gradient: {args.estimated_grad}")
+        logging.info(f"Use Skip Connections: {args.skip}")
+        logging.info(f"Alpha: {args.alpha}")
+        logging.info(f"Beta: {args.beta}")
+        logging.info(f"Gamma: {args.gamma}")
+        logging.info(f"Temperature: {args.temp}")
+        logging.info("=" * 60)
 
     rrl = RRL(dim_list=[(discrete_flen, continuous_flen)] + list(map(int, args.structure.split('@'))) + [len(y_fname)],
               device_id=device_id,
@@ -92,8 +115,7 @@ def train_model(gpu, args):
               alpha=args.alpha,
               beta=args.beta,
               gamma=args.gamma,
-              temperature=args.temp,
-              task_type=task_type)
+              temperature=args.temp)
 
     rrl.train_model(
         data_loader=train_loader,
@@ -109,7 +131,6 @@ def train_model(gpu, args):
 def load_model(path, device_id, log_file=None, distributed=True):
     checkpoint = torch.load(path, map_location='cpu')
     saved_args = checkpoint['rrl_args']
-    task_type = saved_args.get('task_type', 'classification')  # Default to classification for backward compatibility
     rrl = RRL(
         dim_list=saved_args['dim_list'],
         device_id=device_id,
@@ -122,8 +143,7 @@ def load_model(path, device_id, log_file=None, distributed=True):
         use_nlaf=saved_args['use_nlaf'],
         alpha=saved_args['alpha'],
         beta=saved_args['beta'],
-        gamma=saved_args['gamma'],
-        task_type=task_type)
+        gamma=saved_args['gamma'])
     stat_dict = checkpoint['model_state_dict']
     for key in list(stat_dict.keys()):
         # remove 'module.' prefix
@@ -133,9 +153,40 @@ def load_model(path, device_id, log_file=None, distributed=True):
 
 
 def test_model(args):
-    rrl = load_model(args.model, args.device_ids[0], log_file=args.test_res, distributed=False)
+    from datetime import datetime
+    # 添加当前时间戳到文件名
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    test_res_with_time = args.test_res.replace('.txt', f'_{current_time}.txt')
+    
+    rrl = load_model(args.model, args.device_ids[0], log_file=test_res_with_time, distributed=False)
     dataset = args.data_set
-    db_enc, train_loader, _, test_loader = get_data_loader(dataset, 4, 0, args.batch_size, args.ith_kfold, save_best=False, task_type=args.task_type)
+    db_enc, train_loader, _, test_loader = get_data_loader(dataset, 4, 0, args.batch_size, args.ith_kfold, save_best=False)
+    
+    # 在测试结果中添加超参数配置
+    import logging
+    logging.info("=" * 60)
+    logging.info("EXPERIMENT CONFIGURATION")
+    logging.info("=" * 60)
+    logging.info(f"Dataset: {args.data_set}")
+    logging.info(f"Epochs: {args.epoch}")
+    logging.info(f"Batch Size: {args.batch_size}")
+    logging.info(f"Learning Rate: {args.learning_rate}")
+    logging.info(f"Learning Rate Decay Rate: {args.lr_decay_rate}")
+    logging.info(f"Learning Rate Decay Epoch: {args.lr_decay_epoch}")
+    logging.info(f"Weight Decay: {args.weight_decay}")
+    logging.info(f"K-Fold Index: {args.ith_kfold}")
+    logging.info(f"Structure: {args.structure}")
+    logging.info(f"Use NOT Operator: {args.use_not}")
+    logging.info(f"Save Best Model: {args.save_best}")
+    logging.info(f"Use NLAF: {args.nlaf}")
+    logging.info(f"Use Estimated Gradient: {args.estimated_grad}")
+    logging.info(f"Use Skip Connections: {args.skip}")
+    logging.info(f"Alpha: {args.alpha}")
+    logging.info(f"Beta: {args.beta}")
+    logging.info(f"Gamma: {args.gamma}")
+    logging.info(f"Temperature: {args.temp}")
+    logging.info("=" * 60)
+    
     rrl.test(test_loader=test_loader, set_name='Test')
     if args.print_rule:
         with open(args.rrl_file, 'w') as rrl_file:

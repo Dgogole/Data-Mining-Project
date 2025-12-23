@@ -44,8 +44,6 @@ parser.add_argument('--print_rule', action="store_true",
 parser.add_argument('-s', '--structure', type=str, default='5@64',
                     help='Set the number of nodes in the binarization layer and logical layers. '
                          'E.g., 10@64, 10@64@32@16.')
-parser.add_argument('--task_type', type=str, required=True, choices=['classification', 'regression'],
-                    help='Set the task type: classification or regression.')
 
 rrl_args = parser.parse_args()
 rrl_args.folder_name = '{}_e{}_bs{}_lr{}_lrdr{}_lrde{}_wd{}_ki{}_rc{}_useNOT{}_saveBest{}_useNLAF{}_estimatedGrad{}_useSkip{}_alpha{}_beta{}_gamma{}_temp{}'.format(
