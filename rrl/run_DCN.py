@@ -45,7 +45,7 @@ def evaluate(model, dataloader):
         y_pred.append(preds)
     return torch.cat(y_pred, axis=0).cpu()
 
-def call_result(y_train, y_train_pred, y_test, y_test_pred):
+def cal_result(y_train, y_train_pred, y_test, y_test_pred):
     if TASK == "regression":
         train_mse = mean_squared_error(y_train, y_train_pred)
         test_mse = mean_squared_error(y_test, y_test_pred)
@@ -147,7 +147,7 @@ def train_model(model, X_train, y_train, X_test, y_test):
     y_train_pred = evaluate(model, train_dataloader)
     y_test_pred = evaluate(model, test_dataloader)
     
-    result = call_result(y_train, y_train_pred, y_test, y_test_pred)
+    result = cal_result(y_train, y_train_pred, y_test, y_test_pred)
     print(result)
     return result
 
